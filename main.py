@@ -1,133 +1,93 @@
+
 import os
 import json
 import logging
-from uuid import uuid4
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, ContextTypes,
-    CallbackQueryHandler
-)
-from dotenv import load_dotenv
-from flask import Flask
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from openai import OpenAI
 
-# Загрузка переменных окружения
-load_dotenv()
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))  # замени на свой Telegram ID
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Настройка логгирования
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+ADMIN_ID = 75729723
+GENERATIONS_LIMIT = 2
 
-# Webhook (для Render)
-app = Flask(__name__)
-telegram_app = ApplicationBuilder().token(TOKEN).build()
-
-# Хранилище
-DATA_FILE = "user_data.json"
-if not os.path.exists(DATA_FILE):
-    with open(DATA_FILE, 'w') as f:
-        json.dump({}, f)
+USER_DATA_FILE = "user_data.json"
 
 
-def load_data():
-    with open(DATA_FILE, 'r') as f:
+def load_user_data():
+    if not os.path.exists(USER_DATA_FILE):
+        return {}
+    with open(USER_DATA_FILE, "r") as f:
         try:
             return json.load(f)
         except:
             return {}
 
 
-def save_data(data):
-    with open(DATA_FILE, 'w') as f:
+def save_user_data(data):
+    with open(USER_DATA_FILE, "w") as f:
         json.dump(data, f)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    user_id = str(user.id)
-    data = load_data()
-
-    ref = context.args[0] if context.args else None
-    if user_id not in data:
-        data[user_id] = {"gens": 2, "ref_by": ref, "refers": []}
-        if ref and ref in data:
-            data[ref]["gens"] += 1
-            data[ref]["refers"].append(user_id)
-    save_data(data)
-
-    await update.message.reply_text(
-        f"Привет, {user.first_name}! У тебя {data[user_id]['gens']} бесплатных генераций.\n"
-        f"Приглашай друзей и получай больше!"
-    )
+    data = load_user_data()
+    if str(user.id) not in data:
+        data[str(user.id)] = {"gen_count": 0, "referrals": []}
+        if context.args:
+            ref = context.args[0]
+            if ref != str(user.id) and ref in data:
+                data[ref]["referrals"].append(str(user.id))
+                data[ref]["gen_count"] += 1
+    save_user_data(data)
+    await update.message.reply_text(f"Привет, {user.first_name}! Напиши /generate и получишь тюнинг.")
 
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    data = load_data()
-
-    if data.get(user_id, {}).get("gens", 0) <= 0:
-        await update.message.reply_text("У тебя закончились генерации 😢")
+    user = update.effective_user
+    data = load_user_data()
+    user_data = data.get(str(user.id), {"gen_count": 0})
+    if user_data["gen_count"] >= GENERATIONS_LIMIT:
+        await update.message.reply_text("Лимит генераций исчерпан.")
         return
 
-    data[user_id]["gens"] -= 1
-    save_data(data)
+    await update.message.reply_text("Генерация...")
 
-    await update.message.reply_text("🔧 Генерирую тюнинг... (тут будет фото или ссылка)")
-    # Здесь вставь вызов модели генерации
-
-    await update.message.reply_text(f"У тебя осталось {data[user_id]['gens']} генераций.")
-
-
-async def refer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    await update.message.reply_text(
-        f"Твоя реферальная ссылка:\nhttps://t.me/{context.bot.username}?start={user_id}"
+    # Пример генерации
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    response = openai_client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": "Сгенерируй описание кастомного тюнинга авто."}]
     )
 
+    result = response.choices[0].message.content
+    await update.message.reply_text(result)
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    data = load_data()
-    if user_id not in data:
-        await update.message.reply_text("Нет данных о тебе.")
-        return
-
-    await update.message.reply_text(
-        f"🔢 Генераций: {data[user_id]['gens']}\n👥 Приглашено: {len(data[user_id].get('refers', []))}"
-    )
+    user_data["gen_count"] += 1
+    data[str(user.id)] = user_data
+    save_user_data(data)
 
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        return await update.message.reply_text("Ты не админ 😎")
-
-    data = load_data()
-    total_users = len(data)
-    total_gens = sum([user.get("gens", 0) for user in data.values()])
-    await update.message.reply_text(
-        f"👑 Админ-панель:\nВсего пользователей: {total_users}\nСуммарно генераций: {total_gens}"
-    )
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return await update.message.reply_text("Нет доступа.")
+    data = load_user_data()
+    text = f"👤 Пользователи: {len(data)}\n"
+    for uid, info in data.items():
+        text += f"ID: {uid}, Генераций: {info.get('gen_count', 0)}, Рефералов: {len(info.get('referrals', []))}\n"
+    await update.message.reply_text(text[:4000])
 
 
-# Flask вебхуки
-@app.route('/')
-def index():
-    return "Бот работает!"
-
-@app.route(f'/{TOKEN}', methods=["POST"])
-def webhook():
-    from flask import request
-    telegram_app.update_queue.put_nowait(Update.de_json(request.get_json(force=True), telegram_app.bot))
-    return "ok"
+def main():
+    logging.basicConfig(level=logging.INFO)
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("generate", generate))
+    app.add_handler(CommandHandler("admin", admin))
+    app.run_polling()
 
 
-# Хендлеры
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(CommandHandler("gen", generate))
-telegram_app.add_handler(CommandHandler("generate", generate))
-telegram_app.add_handler(CommandHandler("ref", refer))
-telegram_app.add_handler(CommandHandler("stats", stats))
-telegram_app.add_handler(CommandHandler("admin", admin))
+if __name__ == "__main__":
+    main()
