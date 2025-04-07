@@ -23,7 +23,7 @@ async def generate_tuning_image(prompt: str):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         file = await context.bot.get_file(update.message.photo[-1].file_id)
-        file_path = f"downloads/{update.message.photo[-1].file_id}.jpg"
+        file_path = f"/tmp/{update.message.photo[-1].file_id}.jpg"
 
         # Скачиваем фото
         async with aiohttp.ClientSession() as session:
@@ -31,32 +31,31 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 with open(file_path, "wb") as f:
                     f.write(await resp.read())
 
-        prompt = "Add aggressive cyberpunk-style body kit tuning to the car in the photo"
+        prompt = "Give this car a body kit"
         image_url = await generate_tuning_image(prompt)
 
-        await update.message.reply_photo(photo=image_url, caption="Вот тюнингованная версия твоей тачки 😎")
+        await update.message.reply_photo(photo=image_url, caption="Готово! Вот твоя тюнингованная машина 🔥")
 
     except Exception as e:
         logging.exception("Ошибка генерации:")
-        await update.message.reply_text("Произошла ошибка при генерации. Попробуй позже.")
+        await update.message.reply_text("Что-то пошло не так при генерации. Попробуй ещё раз позже.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Отправь мне фото машины, и я покажу тебе её в тюнинге 🔥")
+    await update.message.reply_text("Отправь фото машины, и я сделаю её тюнинг.")
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id == ADMIN_ID:
-        await update.message.reply_text("Добро пожаловать в админ-панель.")
+        await update.message.reply_text("Добро пожаловать, админ!")
     else:
-        await update.message.reply_text("Доступ запрещён.")
+        await update.message.reply_text("Нет доступа.")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    # Запуск Webhook (используется на Render)
     port = int(os.environ.get("PORT", 8443))
     app.run_webhook(
         listen="0.0.0.0",
