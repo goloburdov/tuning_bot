@@ -1,5 +1,5 @@
-python-telegram-bot==20.6
-openai
+python-telegram-bot[webhooks]==20.6
+openai==1.14.3
+python-dotenv
 aiohttp
 httpx
-Pillow
