@@ -1,102 +1,115 @@
+
 import os
 import logging
-from dotenv import load_dotenv
+import openai
+import aiohttp
+from PIL import Image
+from io import BytesIO
 from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     MessageHandler,
     ContextTypes,
     filters,
 )
-import openai
-import aiohttp
 
-# Загрузка переменных окружения
-load_dotenv()
+# Настройки
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID = 75729723
 PROMPT = "Give this car a body kit"
 
-# Настройка логов
+openai.api_key = OPENAI_API_KEY
+
+# Память пользователей
+user_data = {}
+referrals = {}
+
+# Логгинг
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Словари для лимитов и рефералов
-user_limits = {}
-user_referrals = {}
-
-# Установка API ключа OpenAI
-openai.api_key = OPENAI_API_KEY
-
-async def generate_image_from_photo(image_path: str) -> str:
-    with open(image_path, "rb") as image_file:
-        response = openai.images.create_variation(
-            image=image_file,
-            n=1,
-            size="512x512"
-        )
-    return response.data[0].url
-
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-
-    # Лимиты
-    if user_id != ADMIN_ID:
-        user_limits.setdefault(user_id, 2)
-        if user_limits[user_id] <= 0:
-            await update.message.reply_text(
-                "❌ Лимит генераций исчерпан. Пригласи друга по своей ссылке, чтобы получить ещё 1 генерацию."
-            )
-            return
-        user_limits[user_id] -= 1
-
-    # Скачивание фото
-    photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    file_path = f"/tmp/{photo.file_id}.jpg"
-    await file.download_to_drive(file_path)
-
-    # Генерация
-    try:
-        result_url = await generate_image_from_photo(file_path)
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=result_url)
-    except Exception as e:
-        logger.error("Ошибка генерации: %s", e)
-        await update.message.reply_text("⚠️ Ошибка генерации тюнинга.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    args = context.args
-    if args:
-        try:
-            referrer_id = int(args[0])
-            if referrer_id != user_id:
-                user_limits[referrer_id] = user_limits.get(referrer_id, 2) + 1
-                user_referrals.setdefault(referrer_id, []).append(user_id)
-        except Exception:
-            pass
-    await update.message.reply_text(
-        "🚗 Отправь мне фото машины, и я наложу на неё тюнинг!\n\n"
-        f"🔗 Твоя реферальная ссылка:\nhttps://t.me/{context.bot.username}?start={user_id}"
-    )
+    user_id = update.effective_user.id
+    text = "Привет! Отправь мне фото машины, и я добавлю тюнинг.
+У тебя 2 генерации бесплатно."
+    ref = context.args[0] if context.args else None
+
+    if user_id not in user_data:
+        user_data[user_id] = 2 if user_id != ADMIN_ID else float('inf')
+        if ref and ref.isdigit() and int(ref) != user_id:
+            ref_id = int(ref)
+            referrals.setdefault(ref_id, set()).add(user_id)
+            user_data[ref_id] = user_data.get(ref_id, 0) + 1
+
+    await update.message.reply_text(text)
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    gen_left = user_data.get(user_id, 2 if user_id != ADMIN_ID else float('inf'))
+
+    if gen_left <= 0 and user_id != ADMIN_ID:
+        await update.message.reply_text("У тебя закончились генерации. Пригласи друга по ссылке:"
+                                        f"https://t.me/{context.bot.username}?start={user_id}")
+        return
+
+    photo_file = await update.message.photo[-1].get_file()
+    async with aiohttp.ClientSession() as session:
+        async with session.get(photo_file.file_path) as resp:
+            img_bytes = await resp.read()
+
+    try:
+        img = Image.open(BytesIO(img_bytes)).convert("RGBA")
+        if img.format != "PNG":
+            png_io = BytesIO()
+            img.save(png_io, format="PNG")
+            png_io.seek(0)
+        else:
+            png_io = BytesIO(img_bytes)
+
+        response = openai.images.create_variation(
+            image=png_io,
+            n=1,
+            size="1024x1024"
+        )
+        result_url = response.data[0].url
+
+        await update.message.reply_photo(photo=result_url)
+
+        if user_id != ADMIN_ID:
+            user_data[user_id] -= 1
+
+    except Exception as e:
+        logger.error(f"Ошибка генерации: {e}")
+        await update.message.reply_text("Произошла ошибка при генерации изображения. Попробуй ещё раз.")
+
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("Нет доступа.")
         return
-    stats = "\n".join(
-        [f"👤 {uid} — {lim} генераций, 👥 {len(user_referrals.get(uid, []))} рефералов"
-         for uid, lim in user_limits.items()]
-    )
-    await update.message.reply_text(f"📊 Статистика:\n{stats if stats else 'Нет данных'}")
+
+    total_users = len(user_data)
+    top_refs = sorted(referrals.items(), key=lambda x: len(x[1]), reverse=True)
+    ref_text = "\n".join([f"{uid}: {len(refs)} приглашений" for uid, refs in top_refs[:10]])
+
+    await update.message.reply_text(f"Всего пользователей: {total_users}\n\nТоп по рефералам:\n{ref_text}")
+
 
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    logger.info("Бот запущен")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
