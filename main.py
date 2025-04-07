@@ -51,8 +51,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gen_left = user_data.get(user_id, 2 if user_id != ADMIN_ID else float('inf'))
 
     if gen_left <= 0 and user_id != ADMIN_ID:
-        await update.message.reply_text("У тебя закончились генерации. Пригласи друга по ссылке:
-"
+        await update.message.reply_text("У тебя закончились генерации. Пригласи друга по ссылке:"
                                         f"https://t.me/{context.bot.username}?start={user_id}")
         return
 
