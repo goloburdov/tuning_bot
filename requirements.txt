@@ -1,5 +1,8 @@
 python-telegram-bot==13.15
 openai>=1.0.0
+Pillow
 fastapi
+jinja2
+gunicorn
 uvicorn
 python-dotenv
