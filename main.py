@@ -1,123 +1,50 @@
-import logging
 import os
-import json
-from telegram import Update, ReplyKeyboardMarkup
+import logging
+from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-from config import TELEGRAM_BOT_TOKEN, OPENAI_API_KEY
-from openai import OpenAI
-import sys
+import openai
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# ✅ Получаем ключи из переменных окружения
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-logging.basicConfig(level=logging.INFO)
+openai.api_key = OPENAI_API_KEY
 
-USER_DATA_PATH = "user_data.json"
-if not os.path.exists(USER_DATA_PATH):
-    with open(USER_DATA_PATH, "w") as f:
-        json.dump({}, f)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-STYLES = ["Спорт", "Дрифт", "VIP", "Урбан"]
-DEFAULT_FREE_GENERATIONS = 2
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("Привет! Отправь мне фото машины, и я сгенерирую тюнинг-обвес 🎨")
 
-def load_data():
-    with open(USER_DATA_PATH, "r") as f:
-        return json.load(f)
-
-def save_data(data):
-    with open(USER_DATA_PATH, "w") as f:
-        json.dump(data, f)
-
-def start(update: Update, context: CallbackContext) -> None:
-    user_id = str(update.message.from_user.id)
-    args = context.args
-
-    data = load_data()
-
-    if user_id not in data:
-        data[user_id] = {
-            "generations_left": DEFAULT_FREE_GENERATIONS
-        }
-        # Обрабатываем реферал
-        if args:
-            referrer_id = args[0]
-            if referrer_id != user_id and referrer_id in data:
-                data[referrer_id]["generations_left"] += 1
-                data[user_id]["invited_by"] = referrer_id
-                context.bot.send_message(chat_id=referrer_id, text="🎉 Тебе +1 генерация за приглашённого друга!")
-        save_data(data)
-
-    update.message.reply_text(
-        "Привет! Пришли мне фото своей машины 🚗\n"
-        f"Осталось генераций: {data[user_id]['generations_left']}"
-    )
-
-def handle_photo(update: Update, context: CallbackContext) -> None:
-    user_id = str(update.message.from_user.id)
-    data = load_data()
-
-    if user_id not in data:
-        update.message.reply_text("Сначала отправь /start")
-        return
-
-    if data[user_id].get("generations_left", 0) <= 0:
-        update.message.reply_text("У тебя закончились генерации! Пригласи друга или купи через Telegram Stars ✨")
-        return
-
+def handle_photo(update: Update, context: CallbackContext):
+    user = update.message.from_user
     photo_file = update.message.photo[-1].get_file()
-    photo_path = f"user_{user_id}.jpg"
+    photo_path = f"{user.id}_photo.jpg"
     photo_file.download(photo_path)
 
-    data[user_id]["photo"] = photo_path
-    save_data(data)
-
-    reply_markup = ReplyKeyboardMarkup([[s] for s in STYLES], one_time_keyboard=True, resize_keyboard=True)
-    update.message.reply_text("Выбери стиль обвеса:", reply_markup=reply_markup)
-
-def handle_style(update: Update, context: CallbackContext) -> None:
-    user_id = str(update.message.from_user.id)
-    selected_style = update.message.text
-
-    data = load_data()
-
-    if user_id not in data or "photo" not in data[user_id]:
-        update.message.reply_text("Сначала пришли фото машины.")
-        return
-
-    if data[user_id].get("generations_left", 0) <= 0:
-        update.message.reply_text("У тебя закончились генерации!")
-        return
-
-    photo_path = data[user_id]["photo"]
-    update.message.reply_text("Генерирую обвес... ⏳")
-
-    prompt = f"A realistic car with a custom {selected_style.lower()} body kit, wide fenders, aggressive tuning, dramatic lighting, parked on a street"
+    update.message.reply_text("Фото получено. Генерирую тюнинг-обвес... 🛠")
 
     try:
-        response = client.images.generate(
+        # Заменим на простой ответ, потому что генерация картинки с openai.Image больше не поддерживается напрямую
+        response = openai.images.generate(
             model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
+            prompt="A heavily customized car with an aggressive body kit, large wheels, neon underglow, carbon fiber details, futuristic design",
             n=1,
+            size="1024x1024"
         )
-        image_url = response.data[0].url
-        update.message.reply_photo(photo=image_url, caption=f"Вот твой обвес в стиле: {selected_style} 🤘")
 
-        # Уменьшаем генерации
-        data[user_id]["generations_left"] -= 1
-        save_data(data)
+        image_url = response['data'][0]['url']
+        update.message.reply_photo(image_url, caption="Вот твой обвес!")
 
     except Exception as e:
-        logging.error(e)
-        update.message.reply_text("Ошибка при генерации 😔")
+        logging.error(f"Ошибка генерации: {e}")
+        update.message.reply_text("Произошла ошибка при генерации. Попробуй позже.")
 
 def main():
     updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    dp.add_handler(CommandHandler("start", start, pass_args=True))
+    dp.add_handler(CommandHandler("start", start))
     dp.add_handler(MessageHandler(Filters.photo, handle_photo))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_style))
 
     updater.start_polling()
     updater.idle()
