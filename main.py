@@ -33,8 +33,7 @@ logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = "Привет! Отправь мне фото машины, и я добавлю тюнинг.
-У тебя 2 генерации бесплатно."
+    text = "Привет! Отправь мне фото машины, и я добавлю тюнинг. У тебя 2 генерации бесплатно."
     ref = context.args[0] if context.args else None
 
     if user_id not in user_data:
@@ -52,7 +51,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gen_left = user_data.get(user_id, 2 if user_id != ADMIN_ID else float('inf'))
 
     if gen_left <= 0 and user_id != ADMIN_ID:
-        await update.message.reply_text("У тебя закончились генерации. Пригласи друга по ссылке:"
+        await update.message.reply_text("У тебя закончились генерации. Пригласи друга по ссылке:
+"
                                         f"https://t.me/{context.bot.username}?start={user_id}")
         return
 
