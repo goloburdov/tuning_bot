@@ -3,3 +3,4 @@ openai==1.14.3
 python-dotenv
 aiohttp
 httpx
+Pillow
