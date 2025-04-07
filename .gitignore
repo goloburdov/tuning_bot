@@ -1,5 +1,3 @@
-config.py
-os.env
-os.env
-os.env
-os.env
+__pycache__/
+*.pyc
+user_data.json
