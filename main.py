@@ -18,7 +18,7 @@ from telegram.ext import (
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID = 75729723
-PROMPT = "Give this car a body kit"
+PROMPT = "Take the input image of a car and keep everything in the image exactly the same — background, lighting, colors, and environment must remain unchanged. Only modify the car by adding realistic, stylish body kits and tuning elements (such as bumpers, side skirts, spoilers, diffusers, and wide fenders). Make sure the added parts match the perspective, lighting, and style of the original photo. Do not alter anything else in the image."
 
 openai.api_key = OPENAI_API_KEY
 
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = "Привет! Отправь мне фото машины, и я добавлю тюнинг. У тебя 2 генерации бесплатно."
+    text = "Привет, {user_first_name}! Отправь мне фото машины, и я добавлю тюнинг. У тебя доступно 2 генерации бесплатно."
     ref = context.args[0] if context.args else None
 
     if user_id not in user_data:
@@ -51,7 +51,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gen_left = user_data.get(user_id, 2 if user_id != ADMIN_ID else float('inf'))
 
     if gen_left <= 0 and user_id != ADMIN_ID:
-        await update.message.reply_text("У тебя закончились генерации. Пригласи друга по ссылке:"
+        await update.message.reply_text("{user_first_name}, у тебя закончились генерации. Пригласи друга по ссылке, за каждого другы ты получишь 1 генерацию бесплатно:"
                                         f"https://t.me/{context.bot.username}?start={user_id}")
         return
 
