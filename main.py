@@ -41,7 +41,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 data[ref]["referrals"].append(str(user.id))
                 data[ref]["gen_count"] += 1
     save_user_data(data)
-    await update.message.reply_text(f"Привет, {user.first_name}! Напиши /generate и получишь тюнинг.")
+    await update.message.reply_text(f"Привет, {user.first_name}! Пришли фото машины и получишь её тюнинг")
 
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
