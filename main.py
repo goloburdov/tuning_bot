@@ -2,118 +2,132 @@ import os
 import json
 import logging
 from uuid import uuid4
-from fastapi import FastAPI, Request
-from telegram import Update, Bot
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, ContextTypes,
-    MessageHandler, filters
+    CallbackQueryHandler
 )
-from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
+from flask import Flask
 
+# Загрузка переменных окружения
 load_dotenv()
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))  # замени на свой Telegram ID
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Настройка логгирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-USER_DATA_FILE = "user_data.json"
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+# Webhook (для Render)
+app = Flask(__name__)
+telegram_app = ApplicationBuilder().token(TOKEN).build()
 
-WEBHOOK_PATH = f"/{TELEGRAM_BOT_TOKEN}"
-RENDER_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-WEBHOOK_URL = f"https://{RENDER_HOSTNAME}{WEBHOOK_PATH}" if RENDER_HOSTNAME else None
+# Хранилище
+DATA_FILE = "user_data.json"
+if not os.path.exists(DATA_FILE):
+    with open(DATA_FILE, 'w') as f:
+        json.dump({}, f)
 
-user_data = {}
 
-# ========== Загрузка/сохранение данных ==========
-def load_user_data():
-    if os.path.exists(USER_DATA_FILE):
+def load_data():
+    with open(DATA_FILE, 'r') as f:
         try:
-            with open(USER_DATA_FILE, "r") as f:
-                return json.load(f)
-        except json.JSONDecodeError:
+            return json.load(f)
+        except:
             return {}
-    return {}
 
-def save_user_data():
-    with open(USER_DATA_FILE, "w") as f:
-        json.dump(user_data, f, indent=4)
 
-# ========== Основная логика ==========
+def save_data(data):
+    with open(DATA_FILE, 'w') as f:
+        json.dump(data, f)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
+    user = update.effective_user
+    user_id = str(user.id)
+    data = load_data()
+
     ref = context.args[0] if context.args else None
-    if user_id not in user_data:
-        user_data[user_id] = {"generations": 2, "ref": ref, "invited": []}
-        if ref and ref in user_data:
-            user_data[ref]["generations"] += 1
-            user_data[ref]["invited"].append(user_id)
-        save_user_data()
+    if user_id not in data:
+        data[user_id] = {"gens": 2, "ref_by": ref, "refers": []}
+        if ref and ref in data:
+            data[ref]["gens"] += 1
+            data[ref]["refers"].append(user_id)
+    save_data(data)
+
     await update.message.reply_text(
-        f"Привет, {update.effective_user.first_name}! У тебя {user_data[user_id]['generations']} генераций.\n"
-        f"Твоя реф-ссылка: https://t.me/{context.bot.username}?start={user_id}"
+        f"Привет, {user.first_name}! У тебя {data[user_id]['gens']} бесплатных генераций.\n"
+        f"Приглашай друзей и получай больше!"
     )
 
-async def handle_image_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = user_data.get(user_id)
-    if not user or user["generations"] <= 0:
-        await update.message.reply_text("У тебя закончились генерации. Пригласи друга, чтобы получить больше!")
+    data = load_data()
+
+    if data.get(user_id, {}).get("gens", 0) <= 0:
+        await update.message.reply_text("У тебя закончились генерации 😢")
         return
 
-    prompt = update.message.text
-    await update.message.reply_text("Генерирую изображение...")
+    data[user_id]["gens"] -= 1
+    save_data(data)
 
-    from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    await update.message.reply_text("🔧 Генерирую тюнинг... (тут будет фото или ссылка)")
+    # Здесь вставь вызов модели генерации
 
-    response = client.images.generate(prompt=prompt, model="dall-e-3", n=1, size="1024x1024")
-    image_url = response.data[0].url
+    await update.message.reply_text(f"У тебя осталось {data[user_id]['gens']} генераций.")
 
-    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=image_url)
 
-    user["generations"] -= 1
-    save_user_data()
+async def refer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    await update.message.reply_text(
+        f"Твоя реферальная ссылка:\nhttps://t.me/{context.bot.username}?start={user_id}"
+    )
 
-# ========== FastAPI часть ==========
-app = FastAPI()
 
-@app.post(WEBHOOK_PATH)
-async def telegram_webhook(req: Request):
-    data = await req.json()
-    update = Update.de_json(data, Bot(token=TELEGRAM_BOT_TOKEN))
-    await app.telegram_app.update_queue.put(update)
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    data = load_data()
+    if user_id not in data:
+        await update.message.reply_text("Нет данных о тебе.")
+        return
+
+    await update.message.reply_text(
+        f"🔢 Генераций: {data[user_id]['gens']}\n👥 Приглашено: {len(data[user_id].get('refers', []))}"
+    )
+
+
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return await update.message.reply_text("Ты не админ 😎")
+
+    data = load_data()
+    total_users = len(data)
+    total_gens = sum([user.get("gens", 0) for user in data.values()])
+    await update.message.reply_text(
+        f"👑 Админ-панель:\nВсего пользователей: {total_users}\nСуммарно генераций: {total_gens}"
+    )
+
+
+# Flask вебхуки
+@app.route('/')
+def index():
+    return "Бот работает!"
+
+@app.route(f'/{TOKEN}', methods=["POST"])
+def webhook():
+    from flask import request
+    telegram_app.update_queue.put_nowait(Update.de_json(request.get_json(force=True), telegram_app.bot))
     return "ok"
 
-@app.get("/admin")
-async def admin(request: Request):
-    token = request.query_params.get("token")
-    if token != ADMIN_PASSWORD:
-        return JSONResponse({"error": "Unauthorized"}, status_code=403)
-    return user_data
 
-# ========== Запуск ==========
-if __name__ == "__main__":
-    import uvicorn
-    import asyncio
-
-    async def main():
-        application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-        app.telegram_app = application
-
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_image_prompt))
-
-        user_data.update(load_user_data())
-
-        if WEBHOOK_URL:
-            await application.bot.set_webhook(WEBHOOK_URL)
-        else:
-            await application.initialize()
-            await application.start()
-            await application.updater.start_polling()
-
-        config = {"host": "0.0.0.0", "port": int(os.getenv("PORT", 8000)), "log_level": "info"}
-        await uvicorn.run(app, **config)
-
-    asyncio.run(main())
+# Хендлеры
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("gen", generate))
+telegram_app.add_handler(CommandHandler("generate", generate))
+telegram_app.add_handler(CommandHandler("ref", refer))
+telegram_app.add_handler(CommandHandler("stats", stats))
+telegram_app.add_handler(CommandHandler("admin", admin))

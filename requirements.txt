@@ -1,8 +1,4 @@
 python-telegram-bot==20.6
-openai>=1.0.0
-Pillow
-fastapi
-jinja2
-gunicorn
-uvicorn
 python-dotenv
+Flask
+gunicorn
